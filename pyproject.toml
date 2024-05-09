@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fastapi-utils"
+version = "0.1.0"
+description = "A well-tailored utility set for FastAPI."
+readme = {file = "README.md", content-type = "text/markdown"}
+authors = [
+    {name = "Dotz Developers", email = "devs-dotz@dotz.com"},
+]
+keywords = ["fastapi", "utilities"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+]
+requires-python = ">=3.8"
+dependencies = [
+    "fastapi",
+]
+
+[project.optional-dependencies]
+all = [
+    "google-cloud-pubsub",
+    "google-cloud-storage",
+    "httpx",
+    "python-jose[cryptography]"
+]
+
+[tool.ruff]
+exclude = [
+    ".git",
+    ".venv",
+    ".pytest_cache",
+    ".ruff_cache",
+]
+
+line-length = 100
+indent-width = 4
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "C4", "UP","ARG001"]
+ignore = ["E402", "E501", "W191", "B904"]
+fixable = ["ALL"]
+unfixable = []
+dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
