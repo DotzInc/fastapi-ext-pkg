@@ -5,8 +5,7 @@ import pytest
 from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel
 
-from fastapi_utils.dependencies import pubsub
-from fastapi_utils.protocols import Publisher
+from fastapi_utils.services import protocols, pubsub
 
 MAGIC_NUMBER = "42"
 
@@ -29,7 +28,7 @@ def pubsub_mock(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
 def test_publisher(pubsub_mock: MagicMock):
     publisher = pubsub.Publisher()
 
-    assert isinstance(publisher, Publisher)
+    assert isinstance(publisher, protocols.Publisher)
 
     topic = "projects/test-project/topics/test-topic"
     message = MessageTest(content="test")

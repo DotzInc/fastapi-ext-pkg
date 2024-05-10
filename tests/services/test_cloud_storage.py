@@ -2,8 +2,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from fastapi_utils.dependencies import cloud_storage
-from fastapi_utils.protocols import Uploader
+from fastapi_utils.services import cloud_storage, protocols
 
 
 @pytest.fixture
@@ -17,7 +16,7 @@ def storage_mock(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
 def test_uploader(storage_mock: MagicMock):
     uploader = cloud_storage.Uploader()
 
-    assert isinstance(uploader, Uploader)
+    assert isinstance(uploader, protocols.Uploader)
 
     uploader.upload("test-bucket", "destination.txt", "source.txt")
 
