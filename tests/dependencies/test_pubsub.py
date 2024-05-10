@@ -40,4 +40,5 @@ def test_publisher(pubsub_mock: MagicMock):
     args = (topic,)
     kwargs = {"data": json.dumps(jsonable_encoder(message)).encode()}
 
-    assert pubsub_mock.publish.called_once_with(*args, **kwargs)
+    assert pubsub_mock.publish.call_count == 1
+    assert pubsub_mock.publish.call_args == (args, kwargs)
