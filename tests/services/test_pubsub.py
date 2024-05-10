@@ -1,7 +1,6 @@
 import json
 from unittest.mock import MagicMock
 
-import pytest
 from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel
 
@@ -14,22 +13,12 @@ class MessageTest(BaseModel):
     content: str
 
 
-@pytest.fixture
-def pubsub_mock(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
-    FakePublisherClient = MagicMock()
-    client = FakePublisherClient.return_value
-    client.publish.return_value.result.return_value = MAGIC_NUMBER
-
-    monkeypatch.setattr("google.cloud.pubsub_v1.PublisherClient", FakePublisherClient)
-
-    return client
-
-
 def test_publisher(pubsub_mock: MagicMock):
     publisher = pubsub.Publisher()
 
     assert isinstance(publisher, protocols.Publisher)
 
+    pubsub_mock.publish.return_value.result.return_value = MAGIC_NUMBER
     topic = "projects/test-project/topics/test-topic"
     message = MessageTest(content="test")
     result = publisher.publish(topic, message)

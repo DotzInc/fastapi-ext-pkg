@@ -1,16 +1,6 @@
 from unittest.mock import MagicMock
 
-import pytest
-
 from fastapi_utils.services import cloud_storage, protocols
-
-
-@pytest.fixture
-def storage_mock(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
-    FakeClient = MagicMock()
-    monkeypatch.setattr("google.cloud.storage.Client", FakeClient)
-
-    return FakeClient.return_value
 
 
 def test_uploader(storage_mock: MagicMock):
