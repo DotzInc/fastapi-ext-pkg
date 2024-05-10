@@ -3,13 +3,13 @@ import json
 import pytest
 from fastapi import FastAPI, Request, Response
 
-from fastapi_utils import middlewares
+from fastapi_utils.middlewares.remove_path import RemovePathMiddleware
 
 
 @pytest.mark.anyio
 async def test_middleware_remove_path():
     app = FastAPI()
-    middleware = middlewares.RemovePathMiddleware(app, path="/test")
+    middleware = RemovePathMiddleware(app, path="/test")
 
     async def call_next(request: Request) -> Response:
         return Response(content=json.dumps({"path": request.scope["path"]}))
