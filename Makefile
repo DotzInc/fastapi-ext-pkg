@@ -8,13 +8,11 @@ ifeq ($(filter undefine,$(value .FEATURES)),)
 SHELL = env PATH="$(PATH)" /bin/bash
 endif
 
-.PHONY: .env .venv
+.PHONY: .venv
 
 build:
 	python3 -m build
-
-.env:
-	echo 'PYTHONPATH="$(SOURCEPATH)"' > .env
+	twine check dist/*
 
 .venv:
 	python3 -m venv $(VIRTUALENV)
@@ -28,7 +26,7 @@ install-hook:
 	echo "make lint" > .git/hooks/pre-commit
 	chmod +x .git/hooks/pre-commit
 
-install-dev: .venv .env install-hook install-code-ext
+install-dev: .venv install-hook install-code-ext
 	if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
 
 lint:
@@ -40,12 +38,12 @@ format:
 	ruff format
 
 test:
-	pytest --disable-warnings -x -n auto --cov-report=xml --cov=$(SOURCEPATH) tests/
+	pytest --disable-warnings -x -n auto --cov-report= --cov=$(SOURCEPATH) tests/
 
-coverage: test coverage.xml
-	coverage report --omit=tests/* -m --fail-under=100
+coverage: test .coverage
+	coverage report -m --fail-under=100
 
 clean:
-	rm -rf .pytest_cache .ruff_cache .coverage* coverage.* *.egg-info dist
+	rm -rf .mypy_cache .pytest_cache .ruff_cache .coverage* coverage.* *.egg-info dist
 	find $(SOURCEPATH) -name __pycache__ | xargs rm -rf
 	find tests -name __pycache__ | xargs rm -rf
