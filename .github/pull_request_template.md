@@ -12,4 +12,5 @@
 * Update ...
 * Remove ...
 
-[TASK-ID](https://task/id)
+### Issue
+Closes #0
