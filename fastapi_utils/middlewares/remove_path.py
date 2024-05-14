@@ -1,14 +1,15 @@
-from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
-from starlette.requests import Request
-from starlette.responses import Response
-from starlette.types import ASGIApp
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 
-class RemovePathMiddleware(BaseHTTPMiddleware):
-    def __init__(self, app: ASGIApp, path: str) -> None:
-        super().__init__(app, self.dispatch)
-        self.path = path
+class RemovePathMiddleware:
+    def __init__(self, app: ASGIApp, path: str = "") -> None:
+        self.app = app
+        self.path = path if not path.endswith("/") else path[:-1]
 
-    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
-        request.scope["path"] = request.scope["path"].replace(self.path, "", 1)
-        return await call_next(request)
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+
+        scope["path"] = scope["path"].replace(self.path, "", 1)
+
+        await self.app(scope, receive, send)
