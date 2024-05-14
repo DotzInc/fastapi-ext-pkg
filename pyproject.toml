@@ -3,7 +3,7 @@ requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "fastapi-utils"
+name = "fastapiutils"
 version = "0.1.0"
 description = "A well-tailored utility set for FastAPI."
 readme = {file = "README.md", content-type = "text/markdown"}
@@ -12,20 +12,23 @@ authors = [
 ]
 keywords = ["fastapi", "utilities"]
 classifiers = [
-    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Internet",
+    "Topic :: Software Development",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
 ]
 requires-python = ">=3.8"
-dependencies = [
-    "fastapi",
-]
+dependencies = ["fastapi"]
 
-[project.optional-dependencies]
-all = [
-    "google-cloud-pubsub",
-    "google-cloud-storage",
-    "httpx",
-    "python-jose[cryptography]"
-]
+[project.urls]
+Repository = "https://github.com/DotzInc/fastapi-utils"
 
 [tool.ruff]
 exclude = [
