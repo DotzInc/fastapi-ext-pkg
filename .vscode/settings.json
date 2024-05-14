@@ -16,6 +16,7 @@
   "editor.formatOnSave": true,
   "python.defaultInterpreterPath": ".venv/bin/python",
   "python.testing.pytestArgs": [
+    "--disable-warnings",
     "tests"
   ],
   "python.testing.unittestEnabled": false,
