@@ -1,4 +1,4 @@
-SOURCEPATH := $(PWD)/fastapi_utils
+SOURCEPATH := $(PWD)/fastapi_extras
 VIRTUALENV := $(PWD)/.venv
 
 export PATH := $(VIRTUALENV)/bin:$(PATH)

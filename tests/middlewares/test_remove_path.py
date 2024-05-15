@@ -1,7 +1,7 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.testclient import TestClient
 
-from fastapi_utils.middlewares.remove_path import RemovePathMiddleware
+from fastapi_extras.middlewares.remove_path import RemovePathMiddleware
 
 app = FastAPI()
 app.add_middleware(RemovePathMiddleware, path="/test")
