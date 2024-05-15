@@ -1,8 +1,8 @@
 # FastAPI Utils
 
 ![Tests](https://github.com/DotzInc/fastapi-utils/actions/workflows/tests.yml/badge.svg?event=push)
-![PyPI - Version](https://img.shields.io/pypi/v/fastapiutils)
-![PyPI - Python Version](https://img.shields.io/pypi/pyversions/fastapiutils)
+![PyPI - Version](https://img.shields.io/pypi/v/fastapiutilities)
+![PyPI - Python Version](https://img.shields.io/pypi/pyversions/fastapiutilities)
 
 A well-tailored utility set for FastAPI.
 
@@ -15,5 +15,5 @@ A well-tailored utility set for FastAPI.
 To install FastAPI Utils, use pip:
 
 ```sh
-pip install fastapiutils
+pip install fastapiutilities
 ```
