@@ -1,8 +1,8 @@
-# FastAPI Utils
+# FastAPI Extension Package
 
-![Tests](https://github.com/DotzInc/fastapi-utils/actions/workflows/tests.yml/badge.svg?event=push)
-![PyPI - Version](https://img.shields.io/pypi/v/fastapiutilities)
-![PyPI - Python Version](https://img.shields.io/pypi/pyversions/fastapiutilities)
+![Tests](https://github.com/DotzInc/fastapi-ext-pkg/actions/workflows/tests.yml/badge.svg?event=push)
+![PyPI - Version](https://img.shields.io/pypi/v/fastapi-ext-pkg)
+![PyPI - Python Version](https://img.shields.io/pypi/pyversions/fastapi-ext-pkg)
 
 A well-tailored utility set for FastAPI.
 
@@ -12,8 +12,8 @@ A well-tailored utility set for FastAPI.
 
 ## Installation
 
-To install FastAPI Utils, use pip:
+To install FastAPI Extension Package, use pip:
 
 ```sh
-pip install fastapiutilities
+pip install fastapi-ext-pkg
 ```
