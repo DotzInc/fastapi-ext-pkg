@@ -4,7 +4,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 class RemovePathMiddleware:
     def __init__(self, app: ASGIApp, path: str = "") -> None:
         self.app = app
-        self.path = path if not path.endswith("/") else path[:-1]
+        self.path = path if path.endswith("/") else f"{path}/"
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
