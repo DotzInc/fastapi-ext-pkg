@@ -10,6 +10,6 @@ class RemovePathMiddleware:
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
 
-        scope["path"] = scope["path"].replace(self.path, "", 1)
+        scope["path"] = scope["path"].replace(self.path, "/", 1)
 
         await self.app(scope, receive, send)

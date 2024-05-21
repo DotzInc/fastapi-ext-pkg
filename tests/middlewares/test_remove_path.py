@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 from fastapi_extras.middlewares.remove_path import RemovePathMiddleware
 
 app = FastAPI()
-app.add_middleware(RemovePathMiddleware, path="test")
+app.add_middleware(RemovePathMiddleware, path="/test")
 
 
 @app.get("/foo")
