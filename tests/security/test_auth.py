@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock
 import pytest
 from httpx import Request, Response, codes
 
-from fastapi_extras.security.authorization import RemoteAuthorization
+from fastapi_extras.security.auth import RemoteAuthorization
 
 
 @pytest.mark.anyio
