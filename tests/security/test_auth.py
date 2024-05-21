@@ -26,7 +26,7 @@ def scope() -> Dict[str, Any]:
 
 
 @pytest.fixture
-def payload(scope) -> Dict[str, Any]:
+def payload(scope: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "method": scope["method"],
         "path": scope["path"],
