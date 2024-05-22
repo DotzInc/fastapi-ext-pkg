@@ -25,7 +25,7 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
 ]
 requires-python = ">=3.8"
-dependencies = ["fastapi"]
+dependencies = ["fastapi", "httpx"]
 
 [project.urls]
 Repository = "https://github.com/DotzInc/fastapi-ext-pkg"
