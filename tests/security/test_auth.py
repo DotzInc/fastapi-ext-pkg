@@ -1,4 +1,5 @@
-from typing import Any, Dict
+import json
+from typing import Any, Dict, Optional
 from unittest.mock import AsyncMock
 
 import pytest
@@ -12,6 +13,16 @@ from fastapi_extras.security import auth
 AUTH_URL = "http://auth.test"
 AUTH_KEY = "supers3cr3t"
 USER_KEY = "cmFwYWR1cmEK"
+
+
+class FakeCache:
+    db = {}
+
+    async def get(self, key: str) -> Optional[str]:
+        return self.db.get(key)
+
+    async def set(self, key: str, value: str):
+        self.db[key] = value
 
 
 @pytest.fixture
@@ -42,16 +53,35 @@ async def test_remote_authorization(
     payload: Dict[str, Any],
     httpx_asyncmock: AsyncMock,
 ):
+    context = {"foo": "bar"}
+
     httpx_request = HTTPXRequest("POST", AUTH_URL, json=payload, headers={"x-api-key": AUTH_KEY})
-    httpx_response = HTTPXResponse(request=httpx_request, status_code=codes.OK, json={"foo": "bar"})
+    httpx_response = HTTPXResponse(request=httpx_request, status_code=codes.OK, json=context)
     httpx_asyncmock.return_value = httpx_response
 
-    authorizer = auth.remote_authorization(url=AUTH_URL, headers={"x-api-key": AUTH_KEY})
+    cache = FakeCache()
+    headers = {"x-api-key": AUTH_KEY}
+
+    authorizer = auth.remote_authorization(url=AUTH_URL, cache=cache, headers=headers)
     request = Request(scope=scope)
     response = await authorizer(request, USER_KEY)
 
-    assert response == {"foo": "bar"}
-    assert request.scope["authorizer"] == response
+    assert response == context
+    assert response == request.scope["authorizer"]
+    assert len(cache.db) == 1
+
+    key = auth.CacheEntry.keygen(USER_KEY, prefix="authorizer:")
+    val = json.loads(cache.db[key])
+    assert val["authorized"] is True
+    assert val["context"] == context
+
+    del request.scope["authorizer"]
+    response = await authorizer(request, USER_KEY)
+
+    assert response == context
+    assert response == request.scope["authorizer"]
+    assert len(cache.db) == 1
+
     assert httpx_asyncmock.call_count == 1
     assert httpx_asyncmock.call_args.args == ("POST", AUTH_URL)
     assert httpx_asyncmock.call_args.kwargs["json"] == payload
