@@ -174,6 +174,18 @@ def test_echo(httpx_asyncmock: AsyncMock, authorized: Callable[..., Response]):
     assert httpx_asyncmock.await_count == 2
 
 
+def test_echo_without_required_credential(httpx_asyncmock: AsyncMock):
+    headers = {"content-type": "application/json"}
+    path = "/echo/"
+    message = {"content": "echo"}
+
+    response = appy_client.post(path, json=message, headers=headers)
+
+    assert response.status_code == status.HTTP_403_FORBIDDEN
+    assert response.json() == {"detail": "Not authenticated"}
+    assert httpx_asyncmock.await_count == 0
+
+
 def test_health_check(httpx_asyncmock: AsyncMock, authorized: Callable[..., Response]):
     headers = {"authorization": f"Bearer {USER_KEY}"}
     path = "/health/"
