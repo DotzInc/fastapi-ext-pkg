@@ -1,12 +1,14 @@
-import json
-from typing import Any, Dict, Optional
+from typing import Any, AsyncGenerator, Callable, Dict, Optional
 from unittest.mock import AsyncMock
 
 import pytest
-from fastapi import Request
-from httpx import Request as HTTPXRequest
-from httpx import Response as HTTPXResponse
-from httpx import codes
+from fastapi import Depends, FastAPI, status
+from fastapi.security import APIKeyQuery
+from fastapi.testclient import TestClient
+from httpx import ConnectTimeout, Request, Response, codes
+from pydantic import BaseModel
+from pytest import MonkeyPatch
+from typing_extensions import Annotated
 
 from fastapi_extras.security import auth
 
@@ -16,95 +18,237 @@ USER_KEY = "cmFwYWR1cmEK"
 
 
 class FakeCache:
-    db = {}
+    def __init__(self):
+        self.db = {}
+        self.hits = 0
 
     async def get(self, key: str) -> Optional[str]:
+        self.hits += 1 if key in self.db else 0
         return self.db.get(key)
 
-    async def set(self, key: str, value: str):
+    async def set(self, key: str, value: str, ttl: Optional[int] = None):
         self.db[key] = value
 
+    async def aclose(self):
+        pass
+
+    def flush(self):
+        self.db.clear()
+        self.hits = 0
+
+
+class FakeCacheGenerator:
+    def __init__(self):
+        self.cache = FakeCache()
+
+    async def __call__(self) -> AsyncGenerator[FakeCache, None]:
+        try:
+            yield self.cache
+        finally:
+            await self.cache.aclose()
+
+
+query_scheme = APIKeyQuery(name="token")
+cache_gen = FakeCacheGenerator()
+
+authorizer = auth.remote_authorization(
+    AUTH_URL,
+    scheme=query_scheme,
+    headers={"x-api-key": AUTH_KEY},
+)
+
+cached_authorizer = auth.remote_authorization(
+    AUTH_URL,
+    cache_gen=cache_gen,
+    headers={"x-api-key": AUTH_KEY},
+)
+
+appy = FastAPI(dependencies=[Depends(authorizer)])
+appz = FastAPI(dependencies=[Depends(cached_authorizer)])
+
+
+class Message(BaseModel):
+    content: str
+
+
+@appy.post("/echo/")
+async def echo(message: Message):
+    return {"message": message.content}
+
+
+@appz.get("/health/", status_code=status.HTTP_204_NO_CONTENT)
+def health_check():
+    pass
+
+
+@appz.get("/auth-info/")
+async def auth_info(info: Annotated[Dict[str, Any], Depends(cached_authorizer)]):
+    return info
+
+
+appy_client = TestClient(appy)
+appz_client = TestClient(appz)
+
+
+@pytest.fixture(autouse=True)
+def flush_cache():
+    cache_gen.cache.flush()
+
+
+@pytest.mark.fixture
+def httpx_asyncmock(monkeypatch: MonkeyPatch) -> AsyncMock:
+    mock = AsyncMock()
+    monkeypatch.setattr("httpx.AsyncClient.request", mock)
+
+    return mock
+
 
 @pytest.fixture
-def scope() -> Dict[str, Any]:
-    return {
-        "type": "http",
-        "method": "GET",
-        "path": "/items/",
-        "query_string": "",
-        "headers": [(b"authorization", USER_KEY.encode())],
-    }
+def authorized() -> Callable[..., Response]:
+    def builder(
+        method: str = "GET",
+        path: str = "/",
+        query_params: Optional[Dict[str, Any]] = None,
+        headers: Optional[Dict[str, Any]] = None,
+        cookies: Optional[Dict[str, Any]] = None,
+        is_authorized: bool = True,
+    ):
+        query_params = query_params or {}
+        headers = headers or {}
+        cookies = cookies or {}
+        status_code = codes.UNAUTHORIZED
+        content = {"message": "Invalid credentials"}
+
+        if is_authorized:
+            status_code = codes.OK
+            content = {"sid": "d4ad3d03-1cbe-40a2-8002-e060a65fede0"}
+
+        request = Request(
+            "POST",
+            AUTH_URL,
+            headers={"x-api-key": AUTH_KEY, "content-type": "application/json"},
+            json={
+                "method": method,
+                "path": path,
+                "query_params": query_params,
+                "headers": headers,
+                "cookies": cookies,
+            },
+        )
+
+        response = Response(
+            request=request,
+            status_code=status_code,
+            headers={"content-type": "application/json"},
+            json=content,
+        )
+
+        return response
+
+    return builder
 
 
-@pytest.fixture
-def payload(scope: Dict[str, Any]) -> Dict[str, Any]:
-    return {
-        "method": scope["method"],
-        "path": scope["path"],
-        "query_params": {},
-        "headers": {k.decode(): v.decode() for k, v in scope["headers"]},
-        "cookies": {},
-    }
+def test_echo(httpx_asyncmock: AsyncMock, authorized: Callable[..., Response]):
+    headers = {"content-type": "application/json"}
+    query_params = {"token": USER_KEY}
+    path = "/echo/"
+    message = {"content": "echo"}
+
+    httpx_asyncmock.return_value = authorized(
+        method="POST",
+        path=path,
+        query_params=query_params,
+        headers=headers,
+    )
+
+    response = appy_client.post(path, json=message, params=query_params, headers=query_params)
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json() == {"message": message["content"]}
+    assert httpx_asyncmock.await_count == 1
+
+    response = appy_client.post(path, json=message, params=query_params, headers=query_params)
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json() == {"message": message["content"]}
+    assert httpx_asyncmock.await_count == 2
 
 
-@pytest.mark.anyio
-async def test_remote_authorization(
-    scope: Dict[str, Any],
-    payload: Dict[str, Any],
-    httpx_asyncmock: AsyncMock,
+def test_health_check(httpx_asyncmock: AsyncMock, authorized: Callable[..., Response]):
+    headers = {"authorization": f"Bearer {USER_KEY}"}
+    path = "/health/"
+
+    httpx_asyncmock.return_value = authorized(path=path, headers=headers)
+
+    response = appz_client.get(path, headers=headers)
+
+    assert response.status_code == status.HTTP_204_NO_CONTENT
+    assert httpx_asyncmock.await_count == 1
+    assert cache_gen.cache.hits == 0
+
+    response = appz_client.get(path, headers=headers)
+
+    assert response.status_code == status.HTTP_204_NO_CONTENT
+    assert httpx_asyncmock.await_count == 1
+    assert cache_gen.cache.hits == 1
+
+
+def test_auth_info(httpx_asyncmock: AsyncMock, authorized: Callable[..., Response]):
+    headers = {"authorization": f"Bearer {USER_KEY}"}
+    path = "/auth-info/"
+
+    httpx_asyncmock.return_value = authorized(path=path, headers=headers)
+
+    response = appz_client.get(path, headers=headers)
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json() == {"sid": "d4ad3d03-1cbe-40a2-8002-e060a65fede0"}
+    assert httpx_asyncmock.await_count == 1
+    assert cache_gen.cache.hits == 0
+
+    response = appz_client.get(path, headers=headers)
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json() == {"sid": "d4ad3d03-1cbe-40a2-8002-e060a65fede0"}
+    assert httpx_asyncmock.await_count == 1
+    assert cache_gen.cache.hits == 1
+
+
+def test_health_check_with_invalid_credentials(
+    httpx_asyncmock: AsyncMock, authorized: Callable[..., Response]
 ):
-    context = {"foo": "bar"}
+    headers = {"authorization": "Bearer xoxo"}
+    path = "/health/"
 
-    httpx_request = HTTPXRequest("POST", AUTH_URL, json=payload, headers={"x-api-key": AUTH_KEY})
-    httpx_response = HTTPXResponse(request=httpx_request, status_code=codes.OK, json=context)
-    httpx_asyncmock.return_value = httpx_response
+    httpx_asyncmock.return_value = authorized(path=path, headers=headers, is_authorized=False)
 
-    cache = FakeCache()
-    headers = {"x-api-key": AUTH_KEY}
+    response = appz_client.get(path, headers=headers)
 
-    authorizer = auth.remote_authorization(url=AUTH_URL, cache=cache, headers=headers)
-    request = Request(scope=scope)
-    response = await authorizer(request, USER_KEY)
+    assert response.status_code == status.HTTP_401_UNAUTHORIZED
+    assert httpx_asyncmock.await_count == 1
+    assert cache_gen.cache.hits == 0
 
-    assert response == context
-    assert response == request.scope["authorizer"]
-    assert len(cache.db) == 1
+    response = appz_client.get(path, headers=headers)
 
-    key = auth.CacheEntry.keygen(USER_KEY, prefix="authorizer:")
-    val = json.loads(cache.db[key])
-    assert val["authorized"] is True
-    assert val["context"] == context
-
-    del request.scope["authorizer"]
-    response = await authorizer(request, USER_KEY)
-
-    assert response == context
-    assert response == request.scope["authorizer"]
-    assert len(cache.db) == 1
-
-    assert httpx_asyncmock.call_count == 1
-    assert httpx_asyncmock.call_args.args == ("POST", AUTH_URL)
-    assert httpx_asyncmock.call_args.kwargs["json"] == payload
-    assert httpx_asyncmock.call_args.kwargs["headers"] == {"x-api-key": AUTH_KEY}
+    assert response.status_code == status.HTTP_401_UNAUTHORIZED
+    assert httpx_asyncmock.await_count == 1
+    assert cache_gen.cache.hits == 1
 
 
-@pytest.mark.anyio
-async def test_remote_authorization_raises_401_unauthorized(
-    scope: Dict[str, Any],
-    payload: Dict[str, Any],
-    httpx_asyncmock: AsyncMock,
-):
-    httpx_request = HTTPXRequest("POST", AUTH_URL, json=payload, headers={"x-api-key": AUTH_KEY})
-    httpx_response = HTTPXResponse(request=httpx_request, status_code=codes.UNAUTHORIZED, json={})
-    httpx_asyncmock.return_value = httpx_response
+def test_health_check_when_authorization_request_fails(httpx_asyncmock: AsyncMock):
+    headers = {"authorization": "Bearer xoxo"}
+    path = "/health/"
 
-    authorizer = auth.remote_authorization(url=AUTH_URL, headers={"x-api-key": AUTH_KEY})
-    request = Request(scope=scope)
+    httpx_asyncmock.side_effect = ConnectTimeout("Connection timed out")
 
-    with pytest.raises(type(auth.UNAUTHORIZED), match=auth.UNAUTHORIZED.detail):
-        await authorizer(request, USER_KEY)
+    response = appz_client.get(path, headers=headers)
 
-    assert httpx_asyncmock.call_count == 1
-    assert httpx_asyncmock.call_args.args == ("POST", AUTH_URL)
-    assert httpx_asyncmock.call_args.kwargs["json"] == payload
-    assert httpx_asyncmock.call_args.kwargs["headers"] == {"x-api-key": AUTH_KEY}
+    assert response.status_code == status.HTTP_401_UNAUTHORIZED
+    assert httpx_asyncmock.await_count == 1
+    assert cache_gen.cache.hits == 0
+
+    response = appz_client.get(path, headers=headers)
+
+    assert response.status_code == status.HTTP_401_UNAUTHORIZED
+    assert httpx_asyncmock.await_count == 2
+    assert cache_gen.cache.hits == 0
