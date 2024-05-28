@@ -1,28 +1,34 @@
-from typing import Union
+from typing import Any, Optional
 
 import pytest
 from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
 from pytest import MonkeyPatch
-from redis.asyncio import Redis
 from typing_extensions import Annotated
 
-from fastapi_extras.databases.redis import RedisManager
+from fastapi_extras.databases.redis import Redis, RedisManager
 
 
 class FakeRedis:
     db = {}
     closed = []
 
-    async def get(self, key: str) -> Union[bytes, None]:
+    async def get(self, key: str) -> Optional[str]:
         return FakeRedis.db.get(key)
 
-    async def set(self, key: str, val: str):
-        FakeRedis.db[key] = val.encode()
+    async def set(
+        self, key: str, val: str, ttl: Optional[int] = None, *args: Any, **kwargs: Any
+    ) -> None:
+        FakeRedis.db[key] = val
 
     async def aclose(self):
         FakeRedis.closed.append(id(self))
+
+    @classmethod
+    def flush(cls):
+        cls.db.clear()
+        cls.closed.clear()
 
 
 class Item(BaseModel):
@@ -36,7 +42,7 @@ redis_manager = RedisManager("redis://localhost:6379/0")
 
 @app.get("/items/{key}", response_model=Item)
 async def read(key: str, redis: Annotated[Redis, Depends(redis_manager)]):
-    item = await redis.get(key)
+    item = await redis.get(key) or ""
 
     if not item:
         HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
@@ -58,6 +64,11 @@ def redis_mock(monkeypatch: MonkeyPatch):
     monkeypatch.setattr("redis.asyncio.Redis.get", FakeRedis.get)
     monkeypatch.setattr("redis.asyncio.Redis.set", FakeRedis.set)
     monkeypatch.setattr("redis.asyncio.Redis.aclose", FakeRedis.aclose)
+
+
+@pytest.fixture(autouse=True)
+def redis_flush():
+    FakeRedis.flush()
 
 
 def test_redis_manager():
