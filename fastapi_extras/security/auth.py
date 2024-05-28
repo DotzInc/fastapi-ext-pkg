@@ -7,6 +7,7 @@ from typing import Any, AsyncGenerator, Awaitable, Callable, Optional, Protocol,
 import httpx
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import APIKeyCookie, APIKeyHeader, APIKeyQuery
+from pydantic import AnyHttpUrl
 from typing_extensions import Annotated
 
 logger = logging.getLogger(__name__)
@@ -37,7 +38,7 @@ def keygen(seed: str, prefix: str = "") -> str:
 
 
 def remote_authorization(
-    url: str,
+    url: Union[str, AnyHttpUrl],
     *,
     scheme: APIKeyScheme = DEFAULT_SCHEME,
     cache_gen: CacheGenerator = DEFAULT_CACHE_GEN,
@@ -75,7 +76,7 @@ def remote_authorization(
 
         async with httpx.AsyncClient() as client:
             try:
-                response = await client.post(url, json=info, **kwargs)
+                response = await client.post(str(url), json=info, **kwargs)
             except httpx.HTTPError as http_error:
                 logger.error(http_error)
                 raise UNAUTHORIZED
