@@ -6,6 +6,6 @@ pytest-xdist==3.6.1
 redis==5.0.4
 ruff==0.4.4
 setuptools==69.5.1
-twine==5.0.0
+twine==5.1.0
 
 -e .
