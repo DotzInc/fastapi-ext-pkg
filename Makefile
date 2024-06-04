@@ -38,7 +38,7 @@ format:
 	ruff format
 
 test:
-	pytest -n auto --cov-report= --cov=fastapi_extras/
+	pytest -n auto --cov-report= --cov=$(SOURCEPATH)
 
 coverage: test .coverage
 	coverage report -m --fail-under=100
