@@ -38,7 +38,7 @@ format:
 	ruff format
 
 test:
-	pytest --disable-warnings -x -n auto --cov-report= --cov=$(SOURCEPATH) tests/
+	pytest -n auto --cov-report= --cov=$(SOURCEPATH)
 
 coverage: test .coverage
 	coverage report -m --fail-under=100
