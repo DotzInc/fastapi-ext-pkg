@@ -11,6 +11,7 @@ from pydantic import AnyHttpUrl
 from typing_extensions import Annotated
 
 logger = logging.getLogger(__name__)
+ssl_context = httpx.create_ssl_context()
 
 UNAUTHORIZED = HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 DEFAULT_SCHEME = APIKeyHeader(name="Authorization")
@@ -74,7 +75,7 @@ def remote_authorization(
             "cookies": request.cookies,
         }
 
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(verify=ssl_context) as client:
             try:
                 response = await client.post(str(url), json=info, **kwargs)
             except httpx.HTTPError as http_error:
