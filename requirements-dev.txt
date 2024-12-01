@@ -6,7 +6,7 @@ pytest-xdist==3.6.1
 redis==5.0.4
 ruff==0.4.7
 setuptools==70.0.0
-SQLAlchemy==2.0.30
+SQLAlchemy==2.0.36
 twine==5.1.1
 
 -e .
