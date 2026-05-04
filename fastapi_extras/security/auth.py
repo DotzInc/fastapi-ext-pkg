@@ -55,7 +55,12 @@ def remote_authorization(
         cache: Annotated[Optional[Cache], Depends(cache_gen)],
     ) -> Any:
         key = keygen(token, prefix="authorizer:")
-        cached = await cache.get(key) if cache else None
+
+        cached = None
+        try:
+            cached = await cache.get(key)
+        except Exception as cache_error:
+            logger.warning("Cache get failed, proceeding without cache: %s", cache_error)
 
         if cached:
             cached = json.loads(cached)
@@ -85,9 +90,11 @@ def remote_authorization(
                 authorized = response.status_code == status.HTTP_200_OK
                 context = response.json()
 
-                if cache:
+                try:
                     value = json.dumps({"authorized": authorized, "context": context})
                     await cache.set(key, value, cache_ttl)
+                except Exception as cache_error:
+                    logger.warning("Cache set failed, proceeding without cache: %s", cache_error)
 
                 if not authorized:
                     raise UNAUTHORIZED
