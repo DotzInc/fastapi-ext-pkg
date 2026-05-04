@@ -48,8 +48,42 @@ class FakeCacheGenerator:
             await self.cache.aclose()
 
 
+class FakeBrokenGetCache(FakeCache):
+    async def get(self, key: str) -> Optional[str]:
+        raise ConnectionError("Redis is offline")
+
+
+class FakeBrokenSetCache(FakeCache):
+    async def set(self, key: str, value: str, ttl: Optional[int] = None):
+        raise ConnectionError("Redis is offline")
+
+
+class FakeBrokenGetCacheGenerator:
+    def __init__(self):
+        self.cache = FakeBrokenGetCache()
+
+    async def __call__(self) -> AsyncGenerator[FakeBrokenGetCache, None]:
+        try:
+            yield self.cache
+        finally:
+            await self.cache.aclose()
+
+
+class FakeBrokenSetCacheGenerator:
+    def __init__(self):
+        self.cache = FakeBrokenSetCache()
+
+    async def __call__(self) -> AsyncGenerator[FakeBrokenSetCache, None]:
+        try:
+            yield self.cache
+        finally:
+            await self.cache.aclose()
+
+
 query_scheme = APIKeyQuery(name="token")
 cache_gen = FakeCacheGenerator()
+broken_get_cache_gen = FakeBrokenGetCacheGenerator()
+broken_set_cache_gen = FakeBrokenSetCacheGenerator()
 
 authorizer = auth.remote_authorization(
     AUTH_URL,
@@ -63,8 +97,22 @@ cached_authorizer = auth.remote_authorization(
     headers={"x-api-key": AUTH_KEY},
 )
 
+broken_get_cache_authorizer = auth.remote_authorization(
+    AUTH_URL,
+    cache_gen=broken_get_cache_gen,
+    headers={"x-api-key": AUTH_KEY},
+)
+
+broken_set_cache_authorizer = auth.remote_authorization(
+    AUTH_URL,
+    cache_gen=broken_set_cache_gen,
+    headers={"x-api-key": AUTH_KEY},
+)
+
 appy = FastAPI(dependencies=[Depends(authorizer)])
 appz = FastAPI(dependencies=[Depends(cached_authorizer)])
+app_broken_get = FastAPI(dependencies=[Depends(broken_get_cache_authorizer)])
+app_broken_set = FastAPI(dependencies=[Depends(broken_set_cache_authorizer)])
 
 
 class Message(BaseModel):
@@ -86,8 +134,20 @@ async def auth_info(info: Annotated[Dict[str, Any], Depends(cached_authorizer)])
     return info
 
 
+@app_broken_get.get("/health/", status_code=status.HTTP_204_NO_CONTENT)
+def health_check_broken_get():
+    pass
+
+
+@app_broken_set.get("/health/", status_code=status.HTTP_204_NO_CONTENT)
+def health_check_broken_set():
+    pass
+
+
 appy_client = TestClient(appy)
 appz_client = TestClient(appz)
+app_broken_get_client = TestClient(app_broken_get)
+app_broken_set_client = TestClient(app_broken_set)
 
 
 @pytest.fixture(autouse=True)
@@ -181,7 +241,7 @@ def test_echo_without_required_credential(httpx_asyncmock: AsyncMock):
 
     response = appy_client.post(path, json=message, headers=headers)
 
-    assert response.status_code == status.HTTP_403_FORBIDDEN
+    assert response.status_code == status.HTTP_401_UNAUTHORIZED
     assert response.json() == {"detail": "Not authenticated"}
     assert httpx_asyncmock.await_count == 0
 
@@ -264,3 +324,41 @@ def test_health_check_when_authorization_request_fails(httpx_asyncmock: AsyncMoc
     assert response.status_code == status.HTTP_401_UNAUTHORIZED
     assert httpx_asyncmock.await_count == 2
     assert cache_gen.cache.hits == 0
+
+
+def test_health_check_when_cache_get_fails(
+    httpx_asyncmock: AsyncMock, authorized: Callable[..., Response]
+):
+    headers = {"authorization": f"Bearer {USER_KEY}"}
+    path = "/health/"
+
+    httpx_asyncmock.return_value = authorized(path=path, headers=headers)
+
+    response = app_broken_get_client.get(path, headers=headers)
+
+    assert response.status_code == status.HTTP_204_NO_CONTENT
+    assert httpx_asyncmock.await_count == 1
+
+    response = app_broken_get_client.get(path, headers=headers)
+
+    assert response.status_code == status.HTTP_204_NO_CONTENT
+    assert httpx_asyncmock.await_count == 2
+
+
+def test_health_check_when_cache_set_fails(
+    httpx_asyncmock: AsyncMock, authorized: Callable[..., Response]
+):
+    headers = {"authorization": f"Bearer {USER_KEY}"}
+    path = "/health/"
+
+    httpx_asyncmock.return_value = authorized(path=path, headers=headers)
+
+    response = app_broken_set_client.get(path, headers=headers)
+
+    assert response.status_code == status.HTTP_204_NO_CONTENT
+    assert httpx_asyncmock.await_count == 1
+
+    response = app_broken_set_client.get(path, headers=headers)
+
+    assert response.status_code == status.HTTP_204_NO_CONTENT
+    assert httpx_asyncmock.await_count == 2
