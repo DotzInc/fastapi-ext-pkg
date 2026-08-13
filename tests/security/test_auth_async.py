@@ -190,9 +190,7 @@ def authorized() -> Callable[..., Response]:
 
 def test_remote_authorization_async_rejects_invalid_scheme():
     with pytest.raises(TypeError):
-        auth_async.remote_authorization_async(
-            AUTH_URL, scheme=object(), cache_gen=echo_cache
-        )
+        auth_async.remote_authorization_async(AUTH_URL, scheme=object(), cache_gen=echo_cache)
 
 
 def test_async_redis_cache_configures_pool_with_bounded_timeouts():
