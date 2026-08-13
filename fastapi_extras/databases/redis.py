@@ -15,8 +15,19 @@ class Redis(redis.Redis):
 
 
 class RedisManager:
-    def __init__(self, url: Union[RedisDsn, str]):
-        self.pool = redis.ConnectionPool.from_url(str(url))
+    def __init__(
+        self,
+        url: Union[RedisDsn, str],
+        socket_timeout: float = 2.0,
+        socket_connect_timeout: float = 2.0,
+        health_check_interval: int = 30,
+    ):
+        self.pool = redis.ConnectionPool.from_url(
+            str(url),
+            socket_timeout=socket_timeout,
+            socket_connect_timeout=socket_connect_timeout,
+            health_check_interval=health_check_interval,
+        )
 
     async def __call__(self) -> AsyncGenerator[Redis, None]:
         cli = Redis(connection_pool=self.pool)
