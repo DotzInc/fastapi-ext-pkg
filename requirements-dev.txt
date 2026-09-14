@@ -1,5 +1,6 @@
 anyio[trio]==4.4.0
 build==1.2.1
+elastic-apm==6.25.0
 pytest==8.2.1
 pytest-cov==5.0.0
 pytest-xdist==3.6.1
@@ -9,4 +10,4 @@ setuptools==70.0.0
 SQLAlchemy==2.0.30
 twine==6.1.0
 
--e .
+-e .[apm]
