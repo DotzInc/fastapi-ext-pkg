@@ -1,12 +1,19 @@
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
+import httpx
 import pytest
 from elasticapm.conf.constants import MASK
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from pytest import MonkeyPatch
 
-from fastapi_extras.apm.constants import RESPONSE_BODY_CONTEXT_KEY
+from fastapi_extras.apm.constants import RESPONSE_BODY_CONTEXT_KEY, RESPONSE_BODY_TOO_LARGE
 from fastapi_extras.apm.middleware import ElasticAPMMiddleware
+from fastapi_extras.middlewares.remove_cloud_trace_headers import RemoveCloudTraceHeadersMiddleware
+from fastapi_extras.middlewares.remove_path import RemovePathMiddleware
+
+Header = Tuple[bytes, bytes]
+JSON: Header = (b"content-type", b"application/json")
 
 api = FastAPI()
 
@@ -56,6 +63,27 @@ class SendRecorder:
 
     async def __call__(self, message: Dict[str, Any]) -> None:
         self.messages.append(message)
+
+
+def raw_app(headers: List[Header], *chunks: bytes):
+    async def app(_scope, _receive, send):
+        await send({"type": "http.response.start", "status": 200, "headers": headers})
+        for index, chunk in enumerate(chunks):
+            more_body = index < len(chunks) - 1
+            await send({"type": "http.response.body", "body": chunk, "more_body": more_body})
+
+    return app
+
+
+async def run_raw_app(client, headers: List[Header], *chunks: bytes, **options: Any):
+    middleware = ElasticAPMMiddleware(raw_app(headers, *chunks), client=client, **options)
+    send = SendRecorder()
+
+    await middleware(http_scope("/raw"), make_receive(), send)
+
+    client.end_transaction()
+    [transaction] = client._transport.events_of("transaction")
+    return transaction, send
 
 
 async def call_login(middleware: ElasticAPMMiddleware, send: SendRecorder) -> None:
@@ -132,32 +160,115 @@ async def test_passes_through_non_http_and_ignored_urls(apm_client, monkeypatch:
 
 
 @pytest.mark.anyio
-async def test_read_request_body_handles_chunks_and_interruptions(apm_client):
-    middleware = ElasticAPMMiddleware(api, client=apm_client)
+async def test_records_chunked_response_only_after_last_chunk(apm_client):
+    transaction, send = await run_raw_app(apm_client, [JSON], b'{"token": ', b"", b'"t"}')
 
-    chunked = make_receive(
-        {"type": "http.request", "body": b"ab", "more_body": True},
-        {"type": "http.request", "body": b"", "more_body": True},
-        {"type": "http.request", "body": b"cd", "more_body": False},
-    )
-    interrupted = make_receive({"type": "http.request", "body": b"ab", "more_body": True}, None)
-    disconnected = make_receive({"type": "http.disconnect"})
-
-    assert await middleware._read_request_body(chunked) == b"abcd"
-    assert await middleware._read_request_body(interrupted) == b"ab"
-    assert await middleware._read_request_body(disconnected) == b""
+    assert transaction["context"]["custom"][RESPONSE_BODY_CONTEXT_KEY] == {"token": MASK}
+    assert [message.get("body") for message in send.messages[1:]] == [b'{"token": ', b"", b'"t"}']
 
 
-def test_record_response_body_waits_for_last_chunk(apm_client, monkeypatch: MonkeyPatch):
-    contexts = []
+@pytest.mark.anyio
+async def test_records_json_media_type_variants(apm_client):
+    headers = [(b"content-type", b"Application/Problem+JSON; charset=utf-8")]
+
+    transaction, _send = await run_raw_app(apm_client, headers, b'{"cpf": "123", "title": "x"}')
+
+    assert transaction["context"]["custom"][RESPONSE_BODY_CONTEXT_KEY] == {
+        "cpf": MASK,
+        "title": "x",
+    }
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "headers",
+    [
+        [],
+        [(b"content-type", b"text/csv")],
+        [(b"content-type", b"application/octet-stream")],
+        [JSON, (b"content-encoding", b"gzip")],
+    ],
+)
+async def test_skips_bodies_that_cannot_be_sanitized(apm_client, headers):
+    transaction, send = await run_raw_app(apm_client, headers, b'{"cpf": "123"}')
+
+    assert "custom" not in transaction["context"]
+    assert send.messages[-1]["body"] == b'{"cpf": "123"}'
+
+
+@pytest.mark.anyio
+async def test_records_identity_encoded_json(apm_client):
+    headers = [JSON, (b"content-encoding", b"identity")]
+
+    transaction, _send = await run_raw_app(apm_client, headers, b'{"cpf": "123"}')
+
+    assert transaction["context"]["custom"][RESPONSE_BODY_CONTEXT_KEY] == {"cpf": MASK}
+
+
+@pytest.mark.anyio
+async def test_omits_body_larger_than_declared_limit(apm_client, monkeypatch: MonkeyPatch):
+    joined = []
     monkeypatch.setattr(
-        "fastapi_extras.apm.middleware.elasticapm.set_custom_context", contexts.append
+        "fastapi_extras.apm.middleware.mask_sensitive_data", lambda *args: joined.append(args)
     )
-    middleware = ElasticAPMMiddleware(api, client=apm_client)
-    chunks: List[bytes] = []
+    headers = [JSON, (b"content-length", b"14")]
 
-    middleware._record_response_body({"body": b'{"token": ', "more_body": True}, chunks)
-    assert contexts == []
-    middleware._record_response_body({"body": b'"t"}'}, chunks)
+    transaction, send = await run_raw_app(
+        apm_client, headers, b'{"cpf": "123"}', max_response_body_bytes=10
+    )
 
-    assert contexts == [{RESPONSE_BODY_CONTEXT_KEY: {"token": MASK}}]
+    assert transaction["context"]["custom"][RESPONSE_BODY_CONTEXT_KEY] == RESPONSE_BODY_TOO_LARGE
+    assert joined == []
+    assert send.messages[-1]["body"] == b'{"cpf": "123"}'
+
+
+@pytest.mark.anyio
+async def test_omits_streamed_body_that_outgrows_limit(apm_client):
+    transaction, send = await run_raw_app(
+        apm_client, [JSON], b'{"cpf": ', b'"123"', b"}", max_response_body_bytes=10
+    )
+
+    assert transaction["context"]["custom"][RESPONSE_BODY_CONTEXT_KEY] == RESPONSE_BODY_TOO_LARGE
+    assert len(send.messages) == 4
+
+
+@pytest.mark.anyio
+async def test_records_body_at_exact_limit(apm_client):
+    body = b'{"cpf": "123"}'
+    headers = [JSON, (b"content-length", str(len(body)).encode())]
+
+    transaction, _send = await run_raw_app(
+        apm_client, headers, body, max_response_body_bytes=len(body)
+    )
+
+    assert transaction["context"]["custom"][RESPONSE_BODY_CONTEXT_KEY] == {"cpf": MASK}
+
+
+@pytest.mark.anyio
+async def test_works_inside_service_middleware_stack(make_client):
+    client = make_client(CAPTURE_BODY="off")
+    service = FastAPI()
+
+    @service.get("/items")
+    async def items():
+        return {"access_token": "abc", "name": "Ana"}
+
+    service.add_middleware(RemovePathMiddleware, path="/svc")
+    service.add_middleware(RemoveCloudTraceHeadersMiddleware)
+    service.add_middleware(ElasticAPMMiddleware, client=client)
+    service.add_middleware(CORSMiddleware, allow_origins=["*"])
+
+    transport = httpx.ASGITransport(app=service)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as http:
+        response = await http.get("/svc/items", headers={"origin": "http://front"})
+
+    client.end_transaction()
+    [transaction] = client._transport.events_of("transaction")
+    assert response.status_code == 200
+    assert response.json() == {"access_token": "abc", "name": "Ana"}
+    assert response.headers["access-control-allow-origin"] == "*"
+    assert transaction["result"] == "HTTP 2xx"
+    assert transaction["context"]["custom"][RESPONSE_BODY_CONTEXT_KEY] == {
+        "access_token": MASK,
+        "name": "Ana",
+    }
