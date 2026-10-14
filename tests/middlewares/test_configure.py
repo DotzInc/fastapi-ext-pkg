@@ -133,3 +133,49 @@ def test_custom_apm_middleware_is_injected_without_importing_an_implementation()
     configure_middlewares(app, apm_client=client, apm_middleware_class=MarkerMiddleware)
     assert app.user_middleware[0].cls is MarkerMiddleware
     assert app.user_middleware[0].kwargs == {"client": client}
+
+
+@pytest.mark.parametrize(
+    "invalid_options, message",
+    [
+        (
+            {"apm_config": {"SERVICE_NAME": "test"}, "apm_client": object()},
+            "Pass either apm_config or apm_client",
+        ),
+        (
+            {"extra_middlewares": (MiddlewareSpec("cors", MarkerMiddleware),)},
+            "Duplicate middleware name: cors",
+        ),
+        (
+            {
+                "extra_middlewares": (
+                    MiddlewareSpec("marker", MarkerMiddleware),
+                    MiddlewareSpec("marker", MarkerMiddleware),
+                )
+            },
+            "Duplicate middleware name: marker",
+        ),
+        (
+            {"overrides": (MiddlewareSpec("missing", MarkerMiddleware),)},
+            "Unknown middleware override: missing",
+        ),
+    ],
+)
+def test_invalid_configuration_preserves_existing_stack_and_allows_retry(
+    invalid_options, message, monkeypatch
+):
+    factory = Mock()
+    monkeypatch.setattr("elasticapm.contrib.starlette.make_apm_client", factory)
+    app = FastAPI()
+    app.add_middleware(MarkerMiddleware, label="existing")
+    existing = list(app.user_middleware)
+
+    with pytest.raises(ValueError, match=message):
+        configure_middlewares(app, **invalid_options)
+
+    assert app.user_middleware == existing
+    assert not getattr(app.state, "_fastapi_extras_middlewares_configured", False)
+    factory.assert_not_called()
+
+    configure_middlewares(app, root_path="/service")
+    assert app.user_middleware[-1] is existing[0]
