@@ -11,6 +11,15 @@ PROCESSORS = (
     "fastapi_extras.apm.processors.sanitize_custom_context",
     "fastapi_extras.apm.processors.sanitize_labels",
 )
+AGENT_PROCESSORS = (
+    "elasticapm.processors.sanitize_stacktrace_locals",
+    "elasticapm.processors.sanitize_http_request_cookies",
+    "elasticapm.processors.sanitize_http_response_cookies",
+    "elasticapm.processors.sanitize_http_headers",
+    "elasticapm.processors.sanitize_http_wsgi_env",
+    "elasticapm.processors.sanitize_http_request_body",
+)
+ALL_PROCESSORS = (*PROCESSORS, *AGENT_PROCESSORS)
 
 
 def load_json_structure(value: Any) -> Optional[Any]:
