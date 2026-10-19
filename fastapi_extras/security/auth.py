@@ -2,7 +2,7 @@ import hashlib
 import json
 import logging
 import typing
-from typing import Any, AsyncGenerator, Awaitable, Callable, Optional, Protocol, Union
+from typing import Any, AsyncGenerator, Awaitable, Callable, Optional, Protocol, Tuple, Union
 
 import httpx
 from fastapi import Depends, HTTPException, Request, status
@@ -14,6 +14,12 @@ logger = logging.getLogger(__name__)
 ssl_context = httpx.create_ssl_context()
 
 UNAUTHORIZED = HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+SERVICE_UNAVAILABLE = HTTPException(
+    status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Authorization service unavailable"
+)
+DENIED_STATUS_CODES = frozenset(
+    {status.HTTP_400_BAD_REQUEST, status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN}
+)
 DEFAULT_SCHEME = APIKeyHeader(name="Authorization")
 DEFAULT_CACHE_TTL = 60  # seconds
 
@@ -38,6 +44,21 @@ def keygen(seed: str, prefix: str = "") -> str:
     return f"{prefix}{hash}"
 
 
+def parse_response(response: httpx.Response) -> Tuple[bool, Any]:
+    if response.status_code in DENIED_STATUS_CODES:
+        return False, None
+
+    if response.status_code != status.HTTP_200_OK:
+        logger.error(f"Authorization service returned unexpected status {response.status_code}")
+        raise SERVICE_UNAVAILABLE
+
+    try:
+        return True, response.json()
+    except ValueError:
+        logger.error(f"Authorization service returned a non-JSON body: {response.text}")
+        raise SERVICE_UNAVAILABLE
+
+
 def remote_authorization(
     url: Union[str, AnyHttpUrl],
     *,
@@ -60,7 +81,7 @@ def remote_authorization(
         try:
             cached = await cache.get(key)
         except Exception as cache_error:
-            logger.warning("Cache get failed, proceeding without cache: %s", cache_error)
+            logger.warning(f"Cache get failed, proceeding without cache: {cache_error}")
 
         if cached:
             cached = json.loads(cached)
@@ -84,22 +105,23 @@ def remote_authorization(
             try:
                 response = await client.post(str(url), json=info, **kwargs)
             except httpx.HTTPError as http_error:
-                logger.error(http_error)
-                raise UNAUTHORIZED
-            else:
-                authorized = response.status_code == status.HTTP_200_OK
-                context = response.json()
+                logger.error(
+                    f"Authorization request failed: {type(http_error).__name__}: {http_error}"
+                )
+                raise SERVICE_UNAVAILABLE
 
-                try:
-                    value = json.dumps({"authorized": authorized, "context": context})
-                    await cache.set(key, value, cache_ttl)
-                except Exception as cache_error:
-                    logger.warning("Cache set failed, proceeding without cache: %s", cache_error)
+        authorized, context = parse_response(response)
 
-                if not authorized:
-                    raise UNAUTHORIZED
+        try:
+            value = json.dumps({"authorized": authorized, "context": context})
+            await cache.set(key, value, cache_ttl)
+        except Exception as cache_error:
+            logger.warning(f"Cache set failed, proceeding without cache: {cache_error}")
 
-                request.scope["authorizer"] = context
-                return request.scope["authorizer"]
+        if not authorized:
+            raise UNAUTHORIZED
+
+        request.scope["authorizer"] = context
+        return request.scope["authorizer"]
 
     return authorizer
