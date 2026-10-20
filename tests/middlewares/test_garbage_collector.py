@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 from typing import Any, Dict, List
 from unittest.mock import Mock
@@ -6,7 +7,7 @@ from unittest.mock import Mock
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from pytest import MonkeyPatch
+from pytest import LogCaptureFixture, MonkeyPatch
 
 from fastapi_extras.middlewares import garbage_collector
 from fastapi_extras.middlewares.garbage_collector import (
@@ -14,6 +15,7 @@ from fastapi_extras.middlewares.garbage_collector import (
     GarbageCollectorMiddleware,
     load_malloc_trim,
     read_rss_bytes,
+    to_megabytes,
 )
 
 
@@ -62,13 +64,24 @@ def build_app(**options: Any) -> FastAPI:
     return app
 
 
-def test_freezes_startup_objects_after_lifespan_startup(fake_gc: Mock):
-    with TestClient(build_app()) as client:
+def test_defaults():
+    middleware = GarbageCollectorMiddleware(ok_app)
+
+    assert middleware.every_requests == 5000
+    assert middleware.min_interval_seconds == 60.0
+    assert middleware.generation == 2
+    assert middleware.max_rss_bytes is None
+    assert 0 <= middleware.jitter_seconds <= 12
+
+
+def test_freezes_startup_objects_after_lifespan_startup(fake_gc: Mock, caplog: LogCaptureFixture):
+    with caplog.at_level(logging.INFO), TestClient(build_app()) as client:
         response = client.get("/ping")
 
     assert response.status_code == 200
     fake_gc.collect.assert_called_once_with()
     fake_gc.freeze.assert_called_once_with()
+    assert "froze 42 startup objects" in caplog.text
 
 
 def test_does_not_freeze_when_disabled(fake_gc: Mock):
@@ -79,7 +92,7 @@ def test_does_not_freeze_when_disabled(fake_gc: Mock):
 
 
 @pytest.mark.anyio
-async def test_collects_after_every_requests(fake_gc: Mock):
+async def test_collects_after_every_requests(fake_gc: Mock, caplog: LogCaptureFixture):
     middleware = GarbageCollectorMiddleware(ok_app, every_requests=2, min_interval_seconds=0)
     middleware.malloc_trim = Mock()
 
@@ -87,14 +100,34 @@ async def test_collects_after_every_requests(fake_gc: Mock):
     await asyncio.sleep(0)
     fake_gc.collect.assert_not_called()
 
-    await middleware(http_scope(), noop_receive, noop_send)
-    assert middleware.scheduled is True
-    await asyncio.sleep(0)
+    with caplog.at_level(logging.INFO):
+        await middleware(http_scope(), noop_receive, noop_send)
+        assert middleware.scheduled is True
+        await asyncio.sleep(0)
 
     fake_gc.collect.assert_called_once_with(2)
     middleware.malloc_trim.assert_called_once_with(0)
     assert middleware.requests == 0
     assert middleware.scheduled is False
+    assert "Garbage collection generation=2 collected=7" in caplog.text
+
+
+@pytest.mark.anyio
+async def test_collects_when_rss_exceeds_limit(
+    monkeypatch: MonkeyPatch, fake_gc: Mock, caplog: LogCaptureFixture
+):
+    monkeypatch.setattr(garbage_collector, "read_rss_bytes", lambda: 150 * MEGABYTE)
+    middleware = GarbageCollectorMiddleware(ok_app, max_rss_mb=100, min_interval_seconds=0)
+    middleware.malloc_trim = Mock()
+
+    with caplog.at_level(logging.INFO):
+        await middleware(http_scope(), noop_receive, noop_send)
+        await asyncio.sleep(0)
+
+    fake_gc.collect.assert_called_once_with(2)
+    middleware.malloc_trim.assert_called_once_with(0)
+    assert middleware.requests == 0
+    assert "rss_before_mb=150.00 rss_after_mb=150.00" in caplog.text
 
 
 @pytest.mark.anyio
@@ -141,11 +174,17 @@ async def test_lifespan_messages_are_forwarded(fake_gc: Mock):
 
 
 @pytest.mark.usefixtures("fake_gc")
-def test_respects_min_interval():
-    middleware = GarbageCollectorMiddleware(ok_app, every_requests=1, min_interval_seconds=3600)
+def test_respects_min_interval_with_jitter(monkeypatch: MonkeyPatch):
+    monkeypatch.setattr(garbage_collector.random, "uniform", lambda low, high: high)
+    middleware = GarbageCollectorMiddleware(ok_app, every_requests=1, min_interval_seconds=100)
     middleware.requests = 10
 
+    assert middleware.jitter_seconds == 20
+    middleware.last_collection = garbage_collector.time.monotonic() - 110
     assert middleware.should_collect() is False
+
+    middleware.last_collection = garbage_collector.time.monotonic() - 121
+    assert middleware.should_collect() is True
 
 
 @pytest.mark.usefixtures("fake_gc")
@@ -158,11 +197,8 @@ def test_does_not_schedule_twice():
 
 
 @pytest.mark.usefixtures("fake_gc")
-def test_collects_when_rss_exceeds_limit(monkeypatch: MonkeyPatch):
+def test_does_not_collect_when_rss_is_below_limit_or_unknown(monkeypatch: MonkeyPatch):
     middleware = GarbageCollectorMiddleware(ok_app, max_rss_mb=100, min_interval_seconds=0)
-
-    monkeypatch.setattr(garbage_collector, "read_rss_bytes", lambda: 150 * MEGABYTE)
-    assert middleware.should_collect() is True
 
     monkeypatch.setattr(garbage_collector, "read_rss_bytes", lambda: 50 * MEGABYTE)
     assert middleware.should_collect() is False
@@ -215,6 +251,11 @@ def test_collect_resets_state_when_collection_fails(fake_gc: Mock):
 def test_rejects_invalid_options(options: Dict[str, Any], message: str):
     with pytest.raises(ValueError, match=message):
         GarbageCollectorMiddleware(ok_app, **options)
+
+
+def test_to_megabytes():
+    assert to_megabytes(3 * MEGABYTE) == 3
+    assert to_megabytes(None) == 0
 
 
 def test_load_malloc_trim_returns_libc_function(monkeypatch: MonkeyPatch):

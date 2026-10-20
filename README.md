@@ -54,15 +54,19 @@ implementation. To register another implementation supplied by the caller, pass
 
 * After the application startup, it freezes the startup objects (`gc.freeze()`), so later
   collections skip them.
-* Collections are driven by traffic: one runs after `every_requests` requests, or when the
-  resident memory reaches `max_rss_mb`, never more often than `min_interval_seconds`.
-* Each collection runs after the response is sent and, on glibc, returns freed memory to the
-  operating system with `malloc_trim`.
+* Collections are driven by traffic: one runs after `every_requests` requests (default 5000), or
+  when the resident memory reaches `max_rss_mb`, never more often than `min_interval_seconds`
+  (default 60) plus a per-instance jitter of up to 20%.
+* Each collection runs after the response is sent and, on glibc, calls `malloc_trim` to return
+  freed memory to the operating system. This is best effort: fragmented `pymalloc` arenas may
+  keep the resident memory high.
+* Each collection is logged at INFO level with the collected objects, the duration and the
+  resident memory before and after.
 
 ```python
 from fastapi import FastAPI
 from fastapi_extras.middlewares.garbage_collector import GarbageCollectorMiddleware
 
 app = FastAPI()
-app.add_middleware(GarbageCollectorMiddleware, every_requests=1000, max_rss_mb=768)
+app.add_middleware(GarbageCollectorMiddleware, max_rss_mb=768)
 ```
