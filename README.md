@@ -47,3 +47,22 @@ APM uses the upstream `elasticapm.contrib.starlette.ElasticAPM` by default and
 requires the optional `[apm]` dependency. This branch contains no custom APM
 implementation. To register another implementation supplied by the caller, pass
 `apm_middleware_class`; `apm_options` supplies its constructor options.
+
+## Garbage collector middleware
+
+`GarbageCollectorMiddleware` controls garbage collection without a background loop:
+
+* After the application startup, it freezes the startup objects (`gc.freeze()`), so later
+  collections skip them.
+* Collections are driven by traffic: one runs after `every_requests` requests, or when the
+  resident memory reaches `max_rss_mb`, never more often than `min_interval_seconds`.
+* Each collection runs after the response is sent and, on glibc, returns freed memory to the
+  operating system with `malloc_trim`.
+
+```python
+from fastapi import FastAPI
+from fastapi_extras.middlewares.garbage_collector import GarbageCollectorMiddleware
+
+app = FastAPI()
+app.add_middleware(GarbageCollectorMiddleware, every_requests=1000, max_rss_mb=768)
+```
