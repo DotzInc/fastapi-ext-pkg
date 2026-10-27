@@ -4,6 +4,7 @@ from typing import Any, Mapping, Optional, Sequence, Type
 from fastapi import FastAPI
 from starlette.middleware.cors import CORSMiddleware
 
+from fastapi_extras.middlewares.garbage_collector import GarbageCollectorMiddleware
 from fastapi_extras.middlewares.remove_cloud_trace_headers import RemoveCloudTraceHeadersMiddleware
 from fastapi_extras.middlewares.remove_path import RemovePathMiddleware
 
@@ -29,6 +30,7 @@ def configure_middlewares(
     apm_options: Optional[Mapping[str, Any]] = None,
     apm_middleware_class: Optional[Type[Any]] = None,
     cors: Optional[Mapping[str, Any]] = None,
+    garbage_collector: bool = False,
     extra_middlewares: Sequence[MiddlewareSpec] = (),
     overrides: Sequence[MiddlewareSpec] = (),
     order: Optional[Sequence[str]] = None,
@@ -67,11 +69,14 @@ def configure_middlewares(
             "remove_cloud_trace_headers",
             "apm",
             "cors",
+            "garbage_collector",
         }:
             raise ValueError("Duplicate middleware name: " + spec.name)
         specs[spec.name] = spec
     if cors is not None:
         specs["cors"] = MiddlewareSpec("cors", CORSMiddleware, dict(cors))
+    if garbage_collector:
+        specs["garbage_collector"] = MiddlewareSpec("garbage_collector", GarbageCollectorMiddleware)
     for spec in overrides:
         if spec.name not in specs:
             raise ValueError("Unknown middleware override: " + spec.name)
