@@ -14,6 +14,8 @@ from redis.exceptions import ConnectionError as RedisConnectionError
 from redis.exceptions import RedisError
 from typing_extensions import Annotated
 
+from fastapi_extras.security.auth import SERVICE_UNAVAILABLE, parse_response
+
 logger = logging.getLogger(__name__)
 ssl_context = httpx.create_ssl_context()
 
@@ -155,23 +157,24 @@ def remote_authorization_async(
         try:
             response = await http_client.post(str(url), json=info, **request_kwargs)
         except httpx.HTTPError as http_error:
-            logger.error(http_error)
+            logger.error(
+                "Authorization request failed: %s: %s", type(http_error).__name__, http_error
+            )
+            raise SERVICE_UNAVAILABLE
+
+        authorized, context = parse_response(response)
+
+        try:
+            value = json.dumps({"authorized": authorized, "context": context})
+            await cache.set(key, value, ex=cache_ttl)
+        except RedisError as cache_error:
+            logger.warning("Cache set failed, proceeding without cache: %s", cache_error)
+
+        if not authorized:
             raise UNAUTHORIZED
-        else:
-            authorized = response.status_code == status.HTTP_200_OK
-            context = response.json()
 
-            try:
-                value = json.dumps({"authorized": authorized, "context": context})
-                await cache.set(key, value, ex=cache_ttl)
-            except RedisError as cache_error:
-                logger.warning("Cache set failed, proceeding without cache: %s", cache_error)
-
-            if not authorized:
-                raise UNAUTHORIZED
-
-            request.scope["authorizer"] = context
-            return request.scope["authorizer"]
+        request.scope["authorizer"] = context
+        return request.scope["authorizer"]
 
     authorizer.aclose = aclose
     return authorizer

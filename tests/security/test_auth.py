@@ -315,6 +315,85 @@ def test_health_check_when_authorization_request_fails(httpx_asyncmock: AsyncMoc
 
     response = appz_client.get(path, headers=headers)
 
+    assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+    assert httpx_asyncmock.await_count == 1
+    assert cache_gen.cache.hits == 0
+
+    response = appz_client.get(path, headers=headers)
+
+    assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+    assert httpx_asyncmock.await_count == 2
+    assert cache_gen.cache.hits == 0
+
+
+def upstream_response(status_code: int, content: bytes, content_type: str) -> Response:
+    return Response(
+        request=Request("POST", AUTH_URL),
+        status_code=status_code,
+        headers={"content-type": content_type},
+        content=content,
+    )
+
+
+@pytest.mark.parametrize(
+    "status_code",
+    [codes.INTERNAL_SERVER_ERROR, codes.BAD_GATEWAY, codes.SERVICE_UNAVAILABLE, codes.NOT_FOUND],
+)
+def test_health_check_when_authorization_service_fails(
+    httpx_asyncmock: AsyncMock, status_code: int
+):
+    headers = {"authorization": "Bearer xoxo"}
+    path = "/health/"
+
+    httpx_asyncmock.return_value = upstream_response(
+        status_code, b'{"message": "Internal Server Error"}', "application/json"
+    )
+
+    response = appz_client.get(path, headers=headers)
+
+    assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+    assert response.json() == {"detail": "Authorization service unavailable"}
+    assert httpx_asyncmock.await_count == 1
+    assert cache_gen.cache.hits == 0
+
+    # Authorizer failures are not cached, so the next call asks it again.
+    response = appz_client.get(path, headers=headers)
+
+    assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+    assert httpx_asyncmock.await_count == 2
+    assert cache_gen.cache.hits == 0
+
+
+def test_health_check_when_authorization_service_returns_non_json(httpx_asyncmock: AsyncMock):
+    headers = {"authorization": "Bearer xoxo"}
+    path = "/health/"
+
+    httpx_asyncmock.return_value = upstream_response(
+        codes.OK, b"<html>Bad Gateway</html>", "text/html"
+    )
+
+    response = appz_client.get(path, headers=headers)
+
+    assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+    assert httpx_asyncmock.await_count == 1
+
+    response = appz_client.get(path, headers=headers)
+
+    assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+    assert httpx_asyncmock.await_count == 2
+
+
+@pytest.mark.parametrize("status_code", [codes.BAD_REQUEST, codes.FORBIDDEN])
+def test_health_check_when_credentials_are_denied(httpx_asyncmock: AsyncMock, status_code: int):
+    headers = {"authorization": "Bearer xoxo"}
+    path = "/health/"
+
+    httpx_asyncmock.return_value = upstream_response(
+        status_code, b'{"message": "Forbidden"}', "application/json"
+    )
+
+    response = appz_client.get(path, headers=headers)
+
     assert response.status_code == status.HTTP_401_UNAUTHORIZED
     assert httpx_asyncmock.await_count == 1
     assert cache_gen.cache.hits == 0
@@ -322,8 +401,8 @@ def test_health_check_when_authorization_request_fails(httpx_asyncmock: AsyncMoc
     response = appz_client.get(path, headers=headers)
 
     assert response.status_code == status.HTTP_401_UNAUTHORIZED
-    assert httpx_asyncmock.await_count == 2
-    assert cache_gen.cache.hits == 0
+    assert httpx_asyncmock.await_count == 1
+    assert cache_gen.cache.hits == 1
 
 
 def test_health_check_when_cache_get_fails(
