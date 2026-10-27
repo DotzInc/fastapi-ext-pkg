@@ -5,7 +5,8 @@ from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 from starlette.middleware.cors import CORSMiddleware
 
-from fastapi_extras.middlewares import MiddlewareSpec, configure_middlewares
+from fastapi_extras.middlewares import MiddlewareSpec, configure_middlewares, garbage_collector
+from fastapi_extras.middlewares.garbage_collector import GarbageCollectorMiddleware
 from fastapi_extras.middlewares.remove_cloud_trace_headers import RemoveCloudTraceHeadersMiddleware
 from fastapi_extras.middlewares.remove_path import RemovePathMiddleware
 
@@ -62,6 +63,57 @@ def test_default_stack_preserves_path_headers_and_cors():
             },
         )
         assert preflight.status_code == 200
+
+
+def test_garbage_collector_is_disabled_by_default():
+    app = FastAPI()
+    configure_middlewares(app, cors={"allow_origins": ["*"]})
+    assert GarbageCollectorMiddleware not in [m.cls for m in app.user_middleware]
+
+
+def test_garbage_collector_is_the_outermost_middleware(monkeypatch):
+    fake_gc = Mock()
+    monkeypatch.setattr(garbage_collector, "gc", fake_gc)
+    app = FastAPI()
+
+    @app.get("/hello")
+    async def hello():
+        return {"ok": True}
+
+    configure_middlewares(
+        app,
+        root_path="/service",
+        cors={"allow_origins": ["https://example.com"]},
+        garbage_collector=True,
+        extra_middlewares=(MiddlewareSpec("marker", MarkerMiddleware),),
+    )
+    assert [m.cls for m in app.user_middleware] == [
+        GarbageCollectorMiddleware,
+        CORSMiddleware,
+        MarkerMiddleware,
+        RemoveCloudTraceHeadersMiddleware,
+        RemovePathMiddleware,
+    ]
+    with TestClient(app) as client:
+        response = client.get("/service/hello", headers={"origin": "https://example.com"})
+        assert response.status_code == 200
+        assert response.headers["access-control-allow-origin"] == "https://example.com"
+    fake_gc.freeze.assert_called_once()
+
+
+def test_garbage_collector_options_can_be_overridden():
+    app = FastAPI()
+    configure_middlewares(
+        app,
+        remove_cloud_trace_headers=False,
+        garbage_collector=True,
+        overrides=(
+            MiddlewareSpec(
+                "garbage_collector", GarbageCollectorMiddleware, {"every_requests": 100}
+            ),
+        ),
+    )
+    assert app.user_middleware[0].kwargs == {"every_requests": 100}
 
 
 def test_explicit_order_override_and_disable():
@@ -145,6 +197,10 @@ def test_custom_apm_middleware_is_injected_without_importing_an_implementation()
         (
             {"extra_middlewares": (MiddlewareSpec("cors", MarkerMiddleware),)},
             "Duplicate middleware name: cors",
+        ),
+        (
+            {"extra_middlewares": (MiddlewareSpec("garbage_collector", MarkerMiddleware),)},
+            "Duplicate middleware name: garbage_collector",
         ),
         (
             {
